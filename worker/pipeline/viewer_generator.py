@@ -13,6 +13,7 @@ def generate_viewer(
     use_sprite: bool = True,
     use_webp: bool = True,
     enable_lazy_loading: bool = True,
+    transparent: bool = False,
 ) -> str:
     """
     Generate an interactive 360° viewer HTML file.
@@ -25,13 +26,19 @@ def generate_viewer(
         use_sprite: Whether to use sprite sheet (True) or individual frames (False)
         use_webp: Whether to use WebP format for images
         enable_lazy_loading: Whether to enable lazy loading for individual frames
+        transparent: Whether the images have transparent background
     
     Returns:
         Path to the created HTML file
     """
     columns = int(math.ceil(math.sqrt(num_frames)))
-    sprite_ext = "webp" if use_webp else "jpg"
-    frame_ext = "webp" if use_webp else "jpg"
+    
+    if transparent:
+        sprite_ext = "png"
+        frame_ext = "png"
+    else:
+        sprite_ext = "webp" if use_webp else "jpg"
+        frame_ext = "webp" if use_webp else "jpg"
     
     html_content = f'''<!DOCTYPE html>
 <html lang="en">
@@ -69,13 +76,57 @@ def generate_viewer(
             width: {frame_width}px;
             height: {frame_height}px;
             max-width: 100%;
+            background-color: {'transparent' if transparent else '#f5f5f5'};
             background-image: url('sprite.{sprite_ext}');
             background-size: {columns * frame_width}px auto;
             background-position: 0 0;
+            background-repeat: no-repeat;
             cursor: grab;
             border-radius: 8px;
             user-select: none;
             -webkit-user-select: none;
+        }}
+        
+        .viewer-container.transparent {{
+            background: linear-gradient(45deg, #e0e0e0 25%, transparent 25%),
+                        linear-gradient(-45deg, #e0e0e0 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
+                        linear-gradient(-45deg, transparent 75%, #e0e0e0 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            background-color: #f0f0f0;
+        }}
+        
+        .bg-selector {{
+            display: {'flex' if transparent else 'none'};
+            gap: 8px;
+            margin-top: 12px;
+            justify-content: center;
+        }}
+        
+        .bg-option {{
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #ccc;
+            transition: border-color 0.2s;
+        }}
+        
+        .bg-option:hover, .bg-option.active {{
+            border-color: #3b82f6;
+        }}
+        
+        .bg-option.white {{ background: white; }}
+        .bg-option.black {{ background: #1a1a1a; }}
+        .bg-option.gray {{ background: #808080; }}
+        .bg-option.checker {{
+            background: linear-gradient(45deg, #ccc 25%, transparent 25%),
+                        linear-gradient(-45deg, #ccc 25%, transparent 25%),
+                        linear-gradient(45deg, transparent 75%, #ccc 75%),
+                        linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 10px 10px;
+            background-color: #fff;
         }}
         
         .viewer:active {{
@@ -146,7 +197,7 @@ def generate_viewer(
 <body>
     <h1>360° Car Viewer</h1>
     
-    <div class="viewer-container">
+    <div class="viewer-container{' transparent' if transparent else ''}" id="viewerContainer">
         <div class="viewer" id="viewer"></div>
         
         <div class="controls">
@@ -155,7 +206,14 @@ def generate_viewer(
             <button class="btn" id="resetBtn">↺ Reset</button>
         </div>
         
-        <p class="instructions">Drag left/right to rotate • Use mouse wheel to zoom</p>
+        <div class="bg-selector">
+            <div class="bg-option white active" data-bg="white" title="White"></div>
+            <div class="bg-option black" data-bg="black" title="Black"></div>
+            <div class="bg-option gray" data-bg="gray" title="Gray"></div>
+            <div class="bg-option checker" data-bg="checker" title="Transparent"></div>
+        </div>
+        
+        <p class="instructions">Drag left/right to rotate • {'Click colors to change background' if transparent else 'Use mouse wheel to zoom'}</p>
     </div>
     
     <script>
@@ -276,6 +334,30 @@ def generate_viewer(
                     startAutoRotate();
                 }}
             }}
+        }});
+        
+        // Background selector (for transparent mode)
+        document.querySelectorAll('.bg-option').forEach(option => {{
+            option.addEventListener('click', () => {{
+                document.querySelectorAll('.bg-option').forEach(o => o.classList.remove('active'));
+                option.classList.add('active');
+                
+                const container = document.getElementById('viewerContainer');
+                const bg = option.dataset.bg;
+                
+                container.classList.remove('transparent');
+                container.style.background = '';
+                
+                if (bg === 'white') {{
+                    container.style.background = 'white';
+                }} else if (bg === 'black') {{
+                    container.style.background = '#1a1a1a';
+                }} else if (bg === 'gray') {{
+                    container.style.background = '#808080';
+                }} else if (bg === 'checker') {{
+                    container.classList.add('transparent');
+                }}
+            }});
         }});
         
         // Initialize

@@ -12,6 +12,7 @@ API que convierte un video walk-around grabado por el usuario en un visor intera
 | **Frames por rotación** | Configurable: 24, 36 o 72 frames |
 | **Input esperado** | Video walk-around completo (360°) |
 | **Centrado del objeto** | Automático - auto perfectamente centrado en cada frame |
+| **Remoción de fondo** | Opcional - auto "flotante" con fondo transparente |
 | **Stack** | 100% open-source |
 
 ---
@@ -49,7 +50,8 @@ Pipeline simplificado usando:
 | **Detección objeto** | YOLOv8 (ultralytics) | Detectar y localizar auto |
 | **Tracking** | OpenCV | Seguimiento de features |
 | **Procesamiento** | Pillow/OpenCV | Crop, resize, centrado |
-| **Visor 360** | Spritespin / 360-viewer.js | Frontend interactivo |
+| **Remoción fondo** | rembg (U2Net) | Eliminar fondo para transparencia |
+| **Visor 360** | HTML5/JS custom | Frontend interactivo |
 
 ---
 
@@ -63,17 +65,19 @@ Pipeline simplificado usando:
 │       ↓                                                      │
 │  2. FFmpeg: Estabilización con vidstab                      │
 │       ↓                                                      │
-│  3. YOLOv8: Detección del auto en cada frame                │
+│  3. Extracción de N frames equidistantes (24/36/72)         │
 │       ↓                                                      │
-│  4. OpenCV: Estimación de ángulo de rotación                │
+│  4. YOLOv8: Detección del auto en cada frame                │
 │       ↓                                                      │
-│  5. Extracción de N frames equidistantes (24/36/72)         │
+│  5. Normalización: crop centrado, resize uniforme           │
 │       ↓                                                      │
-│  6. Normalización: crop centrado, resize uniforme           │
+│  6. [Opcional] rembg: Remoción de fondo (si remove_bg=true) │
 │       ↓                                                      │
-│  7. Generación de sprite sheet + visor HTML5                │
+│  7. Optimización: WebP (con fondo) o PNG (transparente)     │
 │       ↓                                                      │
-│  8. Output: JSON metadata + imágenes + visor embebible      │
+│  8. Generación de sprite sheet + visor HTML5                │
+│       ↓                                                      │
+│  9. Output: JSON metadata + imágenes + visor embebible      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -401,7 +405,8 @@ POST /api/v1/videos
 Content-Type: multipart/form-data
 
 file: <video.mp4>
-frames: 36  # Opciones: 24, 36, 72
+frames: 36        # Opciones: 24, 36, 72
+remove_bg: false  # true para auto flotante sin fondo
 ```
 
 ## Response: Estado
@@ -422,14 +427,27 @@ frames: 36  # Opciones: 24, 36, 72
   "status": "SUCCESS",
   "result": {
     "viewer_url": "https://minio/car360/abc123/viewer.html",
-    "sprite_url": "https://minio/car360/abc123/sprite.jpg",
+    "sprite_url": "https://minio/car360/abc123/sprite.webp",
     "frames_url": "https://minio/car360/abc123/frames/",
     "metadata": {
       "total_frames": 36,
       "frame_width": 800,
       "frame_height": 600,
-      "processing_time_seconds": 45
+      "processing_time_seconds": 45,
+      "format": "webp",
+      "transparent": false
     }
+  }
+}
+```
+
+### Con remoción de fondo (remove_bg=true)
+```json
+{
+  "metadata": {
+    "total_frames": 36,
+    "format": "png",
+    "transparent": true
   }
 }
 ```

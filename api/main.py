@@ -57,6 +57,7 @@ async def get_metrics_history(limit: int = 10):
 async def upload_video(
     file: UploadFile = File(...),
     frames: int = Form(default=36),
+    remove_bg: bool = Form(default=False),
     settings: Settings = Depends(get_settings),
 ):
     """
@@ -64,6 +65,7 @@ async def upload_video(
     
     - **file**: Video file (mp4, mov, avi)
     - **frames**: Number of frames to extract (24, 36, or 72)
+    - **remove_bg**: Remove background for transparent floating car effect
     """
     # Validate frames
     if frames not in [24, 36, 72]:
@@ -122,6 +124,7 @@ async def upload_video(
             "progress": 0,
             "step": ProcessingStep.UPLOADING.value,
             "frames": frames,
+            "remove_bg": remove_bg,
             "original_filename": file.filename,
             "object_name": object_name,
             "created_at": datetime.utcnow().isoformat(),
@@ -141,7 +144,7 @@ async def upload_video(
             "car360",
             broker=settings.redis_url,
         )
-        celery_app.send_task("process_video", args=[task_id, frames])
+        celery_app.send_task("process_video", args=[task_id, frames, remove_bg])
     except Exception as e:
         # Update task status to failed
         task_data["status"] = TaskStatus.FAILURE.value
