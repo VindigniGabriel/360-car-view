@@ -11,6 +11,7 @@ from .pipeline.stabilizer import stabilize_video, check_vidstab_available
 from .pipeline.detector import VehicleDetector, detect_vehicles_in_frames
 from .pipeline.normalizer import normalize_frames
 from .pipeline.frame_aligner import align_to_center_mass
+from .pipeline.loop_validator import find_best_loop_point, validate_loop
 from .pipeline.sprite_builder import build_sprite_sheet
 from .pipeline.viewer_generator import generate_viewer
 from .pipeline.image_optimizer import batch_optimize, create_webp_sprite
@@ -103,14 +104,24 @@ def process_video(self, task_id: str, num_frames: int = 36, remove_bg: bool = Fa
             stabilized_path = video_path
         update_task_status(task_id, "PROCESSING", 25, "extracting")
         
-        # Step 3: Extract frames at regular intervals (simpler, more reliable)
+        # Step 3: Extract more frames than needed for loop optimization
         frames_dir = os.path.join(task_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
         
-        # Extract equidistant frames directly
+        # Extract 20% more frames to find best loop point
+        extract_count = int(num_frames * 1.2)
         frame_paths, orig_width, orig_height = extract_frames(
-            stabilized_path, frames_dir, num_frames, output_width=800
+            stabilized_path, frames_dir, extract_count, output_width=800
         )
+        update_task_status(task_id, "PROCESSING", 45, "optimizing_loop")
+        
+        # Find best loop point (frames where last is similar to first)
+        frame_paths, _ = find_best_loop_point(frame_paths, num_frames)
+        
+        # Validate loop quality
+        is_valid_loop, similarity = validate_loop(frame_paths)
+        print(f"Loop validation: valid={is_valid_loop}, similarity={similarity:.3f}")
+        
         update_task_status(task_id, "PROCESSING", 50, "detecting")
         
         # Step 4: Detect vehicles in frames for centering
@@ -215,7 +226,7 @@ def process_video(self, task_id: str, num_frames: int = 36, remove_bg: bool = Fa
         
         # Update status: SUCCESS
         metadata = {
-            "total_frames": num_frames,
+            "total_frames": len(frame_paths),
             "frame_width": frame_width,
             "frame_height": frame_height,
             "processing_time_seconds": round(processing_time, 2),
@@ -223,6 +234,8 @@ def process_video(self, task_id: str, num_frames: int = 36, remove_bg: bool = Fa
             "transparent": remove_bg,
             "sprite_columns": sprite_meta.get("columns", 6),
             "sprite_rows": sprite_meta.get("rows", 6),
+            "loop_valid": is_valid_loop,
+            "loop_similarity": round(similarity, 3),
         }
         update_task_status(task_id, "SUCCESS", 100, "completed", metadata=metadata)
         
