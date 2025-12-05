@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    restart: always
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin123}
+      - MINIO_BUCKET=car360
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - minio
+    volumes:
+      - ./temp:/app/temp
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: celery -A worker.celery_app worker -l info
+    restart: always
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin123}
+      - MINIO_BUCKET=car360
+      - REDIS_URL=redis://redis:6379/0
+      - TEMP_DIR=/app/temp
+    depends_on:
+      - redis
+      - minio
+    volumes:
+      - ./models:/app/models
+      - ./temp:/app/temp
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin123}
+    volumes:
+      - minio_data:/data
+
+volumes:
+  minio_data:

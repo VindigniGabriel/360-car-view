@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>360° Car Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .viewer-wrapper {
+            text-align: center;
+        }
+        
+        h1 {
+            color: white;
+            margin-bottom: 24px;
+        }
+        
+        .viewer-container {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .viewer {
+            width: 800px;
+            height: 600px;
+            background: #f3f4f6;
+            border-radius: 8px;
+            cursor: grab;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #9ca3af;
+        }
+        
+        .controls {
+            margin-top: 16px;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        
+        .btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        .btn:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewer-wrapper">
+        <h1>360° Car Viewer</h1>
+        <div class="viewer-container">
+            <div class="viewer" id="viewer">
+                <p>Drag to rotate</p>
+            </div>
+            <div class="controls">
+                <button class="btn" id="autoRotate">▶ Auto Rotate</button>
+                <button class="btn" id="reset">↺ Reset</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

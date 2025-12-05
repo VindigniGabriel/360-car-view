@@ -1,0 +1,2 @@
+# This directory holds ML model weights (e.g., YOLOv8)
+# Models are downloaded at runtime or mounted as volumes
