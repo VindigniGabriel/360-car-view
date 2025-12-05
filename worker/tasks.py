@@ -10,6 +10,7 @@ from .pipeline.extractor import extract_frames
 from .pipeline.stabilizer import stabilize_video, check_vidstab_available
 from .pipeline.detector import VehicleDetector, detect_vehicles_in_frames
 from .pipeline.normalizer import normalize_frames
+from .pipeline.frame_aligner import align_to_center_mass
 from .pipeline.sprite_builder import build_sprite_sheet
 from .pipeline.viewer_generator import generate_viewer
 from .pipeline.image_optimizer import batch_optimize, create_webp_sprite
@@ -122,11 +123,16 @@ def process_video(self, task_id: str, num_frames: int = 36, remove_bg: bool = Fa
         selected_paths = frame_paths
         selected_detections = detections
         
-        # Step 6: Normalize frames
+        # Step 6: Align frames to keep car centered
+        aligned_dir = os.path.join(task_dir, "aligned")
+        aligned_paths = align_to_center_mass(selected_paths, aligned_dir, selected_detections)
+        update_task_status(task_id, "PROCESSING", 65, "normalizing")
+        
+        # Step 7: Normalize frames
         normalized_dir = os.path.join(task_dir, "normalized")
         frame_width, frame_height = 800, 600
         normalized_paths = normalize_frames(
-            selected_paths,
+            aligned_paths,
             selected_detections,
             normalized_dir,
             output_size=(frame_width, frame_height),

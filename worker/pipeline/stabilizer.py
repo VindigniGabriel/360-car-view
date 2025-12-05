@@ -11,9 +11,9 @@ from typing import Optional
 def stabilize_video(
     input_path: str,
     output_path: str,
-    shakiness: int = 5,
+    shakiness: int = 8,
     accuracy: int = 15,
-    smoothing: int = 30,
+    smoothing: int = 60,
     crop: str = "black",
 ) -> str:
     """
