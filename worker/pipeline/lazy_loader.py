@@ -1,38 +1,36 @@
 """
-360° Viewer HTML generator.
-Creates an interactive HTML viewer for the processed frames.
+Lazy loading module for 360° viewer.
+Generates viewer with progressive frame loading.
 """
 import math
+import os
 
 
-def generate_viewer(
+def generate_lazy_viewer(
     output_path: str,
     num_frames: int,
     frame_width: int,
     frame_height: int,
-    use_sprite: bool = True,
-    use_webp: bool = True,
-    enable_lazy_loading: bool = True,
+    frame_ext: str = "webp",
+    preload_count: int = 5,
 ) -> str:
     """
-    Generate an interactive 360° viewer HTML file.
+    Generate a 360° viewer with lazy loading of individual frames.
+    
+    This viewer loads frames on-demand as the user rotates,
+    reducing initial load time for high-frame-count viewers.
     
     Args:
         output_path: Path for output HTML file
-        num_frames: Number of frames in the sequence
-        frame_width: Width of each frame
-        frame_height: Height of each frame
-        use_sprite: Whether to use sprite sheet (True) or individual frames (False)
-        use_webp: Whether to use WebP format for images
-        enable_lazy_loading: Whether to enable lazy loading for individual frames
+        num_frames: Number of frames
+        frame_width: Frame width
+        frame_height: Frame height
+        frame_ext: Frame file extension
+        preload_count: Number of frames to preload around current
     
     Returns:
-        Path to the created HTML file
+        Path to created HTML file
     """
-    columns = int(math.ceil(math.sqrt(num_frames)))
-    sprite_ext = "webp" if use_webp else "jpg"
-    frame_ext = "webp" if use_webp else "jpg"
-    
     html_content = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -40,14 +38,10 @@ def generate_viewer(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>360° Car Viewer</title>
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             min-height: 100vh;
             display: flex;
@@ -56,6 +50,8 @@ def generate_viewer(
             justify-content: center;
             padding: 20px;
         }}
+        
+        h1 {{ color: white; margin-bottom: 24px; font-size: 24px; }}
         
         .viewer-container {{
             background: #fff;
@@ -69,17 +65,36 @@ def generate_viewer(
             width: {frame_width}px;
             height: {frame_height}px;
             max-width: 100%;
-            background-image: url('sprite.{sprite_ext}');
-            background-size: {columns * frame_width}px auto;
-            background-position: 0 0;
+            position: relative;
             cursor: grab;
             border-radius: 8px;
-            user-select: none;
-            -webkit-user-select: none;
+            overflow: hidden;
+            background: #f3f4f6;
         }}
         
-        .viewer:active {{
-            cursor: grabbing;
+        .viewer:active {{ cursor: grabbing; }}
+        
+        .viewer img {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }}
+        
+        .viewer img.active {{ opacity: 1; }}
+        .viewer img.loaded {{ }}
+        
+        .loading-indicator {{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #9ca3af;
+            font-size: 14px;
         }}
         
         .controls {{
@@ -100,38 +115,32 @@ def generate_viewer(
             border-radius: 8px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 500;
             transition: background 0.2s;
         }}
         
-        .btn:hover {{
-            background: #2563eb;
-        }}
-        
-        .btn:disabled {{
-            background: #9ca3af;
-            cursor: not-allowed;
-        }}
+        .btn:hover {{ background: #2563eb; }}
         
         .frame-indicator {{
             font-size: 14px;
             color: #6b7280;
-            min-width: 80px;
+            min-width: 100px;
             text-align: center;
         }}
         
-        .instructions {{
-            color: #9ca3af;
-            font-size: 12px;
+        .progress-bar {{
+            width: 100%;
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
             margin-top: 12px;
-            text-align: center;
+            overflow: hidden;
         }}
         
-        h1 {{
-            color: white;
-            margin-bottom: 24px;
-            font-size: 24px;
-            font-weight: 600;
+        .progress-bar-fill {{
+            height: 100%;
+            background: #3b82f6;
+            width: 0%;
+            transition: width 0.3s ease;
         }}
         
         @media (max-width: 840px) {{
@@ -147,28 +156,33 @@ def generate_viewer(
     <h1>360° Car Viewer</h1>
     
     <div class="viewer-container">
-        <div class="viewer" id="viewer"></div>
+        <div class="viewer" id="viewer">
+            <div class="loading-indicator" id="loadingIndicator">Loading...</div>
+        </div>
+        
+        <div class="progress-bar">
+            <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
         
         <div class="controls">
             <button class="btn" id="autoRotateBtn">▶ Auto Rotate</button>
             <span class="frame-indicator" id="frameIndicator">1 / {num_frames}</span>
             <button class="btn" id="resetBtn">↺ Reset</button>
         </div>
-        
-        <p class="instructions">Drag left/right to rotate • Use mouse wheel to zoom</p>
     </div>
     
     <script>
         const viewer = document.getElementById('viewer');
         const frameIndicator = document.getElementById('frameIndicator');
+        const progressBar = document.getElementById('progressBar');
+        const loadingIndicator = document.getElementById('loadingIndicator');
         const autoRotateBtn = document.getElementById('autoRotateBtn');
         const resetBtn = document.getElementById('resetBtn');
         
         const config = {{
             totalFrames: {num_frames},
-            columns: {columns},
-            frameWidth: {frame_width},
-            frameHeight: {frame_height},
+            frameExt: '{frame_ext}',
+            preloadCount: {preload_count},
         }};
         
         let currentFrame = 0;
@@ -176,18 +190,70 @@ def generate_viewer(
         let startX = 0;
         let autoRotate = false;
         let autoRotateInterval = null;
+        let loadedFrames = new Set();
+        let frameElements = {{}};
+        
+        // Create frame elements
+        for (let i = 0; i < config.totalFrames; i++) {{
+            const img = document.createElement('img');
+            img.dataset.frame = i;
+            img.dataset.src = `frames/frame_${{String(i).padStart(3, '0')}}.${{config.frameExt}}`;
+            frameElements[i] = img;
+            viewer.appendChild(img);
+        }}
+        
+        function loadFrame(frameIndex) {{
+            if (loadedFrames.has(frameIndex)) return Promise.resolve();
+            
+            const img = frameElements[frameIndex];
+            if (!img || img.src) return Promise.resolve();
+            
+            return new Promise((resolve) => {{
+                img.onload = () => {{
+                    loadedFrames.add(frameIndex);
+                    img.classList.add('loaded');
+                    updateProgress();
+                    resolve();
+                }};
+                img.onerror = resolve;
+                img.src = img.dataset.src;
+            }});
+        }}
+        
+        function preloadAround(frameIndex) {{
+            const promises = [];
+            for (let offset = -config.preloadCount; offset <= config.preloadCount; offset++) {{
+                const idx = (frameIndex + offset + config.totalFrames) % config.totalFrames;
+                promises.push(loadFrame(idx));
+            }}
+            return Promise.all(promises);
+        }}
+        
+        function updateProgress() {{
+            const percent = (loadedFrames.size / config.totalFrames) * 100;
+            progressBar.style.width = `${{percent}}%`;
+            
+            if (loadedFrames.size >= config.totalFrames) {{
+                loadingIndicator.style.display = 'none';
+            }}
+        }}
         
         function updateFrame(frame) {{
             currentFrame = ((frame % config.totalFrames) + config.totalFrames) % config.totalFrames;
             
-            const col = currentFrame % config.columns;
-            const row = Math.floor(currentFrame / config.columns);
+            // Hide all frames
+            Object.values(frameElements).forEach(img => img.classList.remove('active'));
             
-            const x = -col * config.frameWidth;
-            const y = -row * config.frameHeight;
+            // Show current frame
+            const currentImg = frameElements[currentFrame];
+            if (currentImg) {{
+                currentImg.classList.add('active');
+            }}
             
-            viewer.style.backgroundPosition = `${{x}}px ${{y}}px`;
             frameIndicator.textContent = `${{currentFrame + 1}} / ${{config.totalFrames}}`;
+            
+            // Preload nearby frames
+            preloadAround(currentFrame);
         }}
         
         function handleDragStart(e) {{
@@ -202,8 +268,6 @@ def generate_viewer(
             
             const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
             const deltaX = clientX - startX;
-            
-            // Sensitivity: pixels per frame
             const sensitivity = 10;
             const frameDelta = Math.floor(deltaX / sensitivity);
             
@@ -221,9 +285,7 @@ def generate_viewer(
         function startAutoRotate() {{
             autoRotate = true;
             autoRotateBtn.textContent = '⏸ Pause';
-            autoRotateInterval = setInterval(() => {{
-                updateFrame(currentFrame + 1);
-            }}, 100);
+            autoRotateInterval = setInterval(() => updateFrame(currentFrame + 1), 100);
         }}
         
         function stopAutoRotate() {{
@@ -235,26 +297,17 @@ def generate_viewer(
             }}
         }}
         
-        // Mouse events
+        // Event listeners
         viewer.addEventListener('mousedown', handleDragStart);
         document.addEventListener('mousemove', handleDragMove);
         document.addEventListener('mouseup', handleDragEnd);
-        
-        // Touch events
         viewer.addEventListener('touchstart', handleDragStart, {{ passive: true }});
         document.addEventListener('touchmove', handleDragMove, {{ passive: true }});
         document.addEventListener('touchend', handleDragEnd);
-        
-        // Prevent context menu on long press
         viewer.addEventListener('contextmenu', e => e.preventDefault());
         
-        // Button events
         autoRotateBtn.addEventListener('click', () => {{
-            if (autoRotate) {{
-                stopAutoRotate();
-            }} else {{
-                startAutoRotate();
-            }}
+            autoRotate ? stopAutoRotate() : startAutoRotate();
         }});
         
         resetBtn.addEventListener('click', () => {{
@@ -262,24 +315,23 @@ def generate_viewer(
             updateFrame(0);
         }});
         
-        // Keyboard navigation
         document.addEventListener('keydown', (e) => {{
-            if (e.key === 'ArrowLeft') {{
-                updateFrame(currentFrame - 1);
-            }} else if (e.key === 'ArrowRight') {{
-                updateFrame(currentFrame + 1);
-            }} else if (e.key === ' ') {{
+            if (e.key === 'ArrowLeft') updateFrame(currentFrame - 1);
+            else if (e.key === 'ArrowRight') updateFrame(currentFrame + 1);
+            else if (e.key === ' ') {{
                 e.preventDefault();
-                if (autoRotate) {{
-                    stopAutoRotate();
-                }} else {{
-                    startAutoRotate();
-                }}
+                autoRotate ? stopAutoRotate() : startAutoRotate();
             }}
         }});
         
         // Initialize
-        updateFrame(0);
+        loadFrame(0).then(() => {{
+            updateFrame(0);
+            // Preload all frames in background
+            for (let i = 1; i < config.totalFrames; i++) {{
+                setTimeout(() => loadFrame(i), i * 50);
+            }}
+        }});
     </script>
 </body>
 </html>'''

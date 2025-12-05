@@ -39,6 +39,20 @@ async def health_check():
     return HealthResponse()
 
 
+@app.get("/api/v1/metrics")
+async def get_metrics():
+    """Get processing metrics and statistics."""
+    from .metrics import metrics
+    return metrics.get_stats()
+
+
+@app.get("/api/v1/metrics/history")
+async def get_metrics_history(limit: int = 10):
+    """Get recent processing history."""
+    from .metrics import metrics
+    return {"history": metrics.get_recent_history(limit)}
+
+
 @app.post("/api/v1/videos", response_model=VideoUploadResponse)
 async def upload_video(
     file: UploadFile = File(...),

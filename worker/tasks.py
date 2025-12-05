@@ -13,6 +13,8 @@ from .pipeline.normalizer import normalize_frames
 from .pipeline.angle_estimator import select_frames_by_angle
 from .pipeline.sprite_builder import build_sprite_sheet
 from .pipeline.viewer_generator import generate_viewer
+from .pipeline.image_optimizer import batch_optimize, create_webp_sprite
+from .pipeline.cache import model_cache
 
 
 def get_redis_client():
@@ -145,35 +147,45 @@ def process_video(self, task_id: str, num_frames: int = 36):
             normalized_dir,
             output_size=(frame_width, frame_height),
         )
-        update_task_status(task_id, "PROCESSING", 75, "building")
+        update_task_status(task_id, "PROCESSING", 70, "optimizing")
         
-        # Step 7: Build sprite sheet
-        sprite_path = os.path.join(task_dir, "sprite.jpg")
-        build_sprite_sheet(normalized_paths, sprite_path, num_frames)
-        update_task_status(task_id, "PROCESSING", 85, "building")
+        # Step 7: Optimize frames to WebP
+        optimized_dir = os.path.join(task_dir, "optimized")
+        optimized_paths = batch_optimize(
+            normalized_paths,
+            optimized_dir,
+            format="webp",
+            quality=85,
+        )
+        update_task_status(task_id, "PROCESSING", 80, "building")
         
-        # Step 8: Generate viewer HTML
+        # Step 8: Build WebP sprite sheet
+        sprite_path = os.path.join(task_dir, "sprite.webp")
+        sprite_path, sprite_meta = create_webp_sprite(optimized_paths, sprite_path, quality=80)
+        update_task_status(task_id, "PROCESSING", 88, "building")
+        
+        # Step 9: Generate viewer HTML (with WebP support)
         viewer_path = os.path.join(task_dir, "viewer.html")
-        generate_viewer(viewer_path, num_frames, frame_width, frame_height)
-        update_task_status(task_id, "PROCESSING", 90, "uploading")
+        generate_viewer(viewer_path, num_frames, frame_width, frame_height, use_webp=True)
+        update_task_status(task_id, "PROCESSING", 92, "uploading")
         
-        # Step 9: Upload results to MinIO
-        # Upload normalized frames
-        for i, frame_path in enumerate(normalized_paths):
+        # Step 10: Upload results to MinIO
+        # Upload optimized WebP frames
+        for i, frame_path in enumerate(optimized_paths):
             frame_name = os.path.basename(frame_path)
             minio_client.fput_object(
                 bucket,
                 f"{task_id}/frames/{frame_name}",
                 frame_path,
-                content_type="image/jpeg",
+                content_type="image/webp",
             )
         
-        # Upload sprite
+        # Upload WebP sprite
         minio_client.fput_object(
             bucket,
-            f"{task_id}/sprite.jpg",
+            f"{task_id}/sprite.webp",
             sprite_path,
-            content_type="image/jpeg",
+            content_type="image/webp",
         )
         
         # Upload viewer
@@ -193,8 +205,18 @@ def process_video(self, task_id: str, num_frames: int = 36):
             "frame_width": frame_width,
             "frame_height": frame_height,
             "processing_time_seconds": round(processing_time, 2),
+            "format": "webp",
+            "sprite_columns": sprite_meta.get("columns", 6),
+            "sprite_rows": sprite_meta.get("rows", 6),
         }
         update_task_status(task_id, "SUCCESS", 100, "completed", metadata=metadata)
+        
+        # Record metrics
+        try:
+            from api.metrics import metrics
+            metrics.record_processing(task_id, processing_time, num_frames, success=True)
+        except Exception:
+            pass
         
         # Cleanup temp files
         import shutil
