@@ -136,8 +136,12 @@ async def upload_video(
     
     # Send task to Celery
     try:
-        from worker.tasks import process_video
-        process_video.delay(task_id, frames)
+        from celery import Celery
+        celery_app = Celery(
+            "car360",
+            broker=settings.redis_url,
+        )
+        celery_app.send_task("process_video", args=[task_id, frames])
     except Exception as e:
         # Update task status to failed
         task_data["status"] = TaskStatus.FAILURE.value

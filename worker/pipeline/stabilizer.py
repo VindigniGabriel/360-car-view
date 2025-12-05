@@ -53,7 +53,6 @@ def stabilize_video(
         result = subprocess.run(
             detect_cmd,
             capture_output=True,
-            text=True,
         )
         
         if result.returncode != 0:
@@ -79,7 +78,6 @@ def stabilize_video(
         result = subprocess.run(
             transform_cmd,
             capture_output=True,
-            text=True,
         )
         
         if result.returncode != 0:

@@ -6,11 +6,10 @@ from datetime import datetime
 import redis
 
 from .celery_app import celery_app
-from .pipeline.extractor import extract_frames, extract_all_frames
+from .pipeline.extractor import extract_frames
 from .pipeline.stabilizer import stabilize_video, check_vidstab_available
 from .pipeline.detector import VehicleDetector, detect_vehicles_in_frames
 from .pipeline.normalizer import normalize_frames
-from .pipeline.angle_estimator import select_frames_by_angle
 from .pipeline.sprite_builder import build_sprite_sheet
 from .pipeline.viewer_generator import generate_viewer
 from .pipeline.image_optimizer import batch_optimize, create_webp_sprite
@@ -101,42 +100,25 @@ def process_video(self, task_id: str, num_frames: int = 36):
             stabilized_path = video_path
         update_task_status(task_id, "PROCESSING", 25, "extracting")
         
-        # Step 3: Extract ALL frames for analysis
-        all_frames_dir = os.path.join(task_dir, "all_frames")
-        os.makedirs(all_frames_dir, exist_ok=True)
+        # Step 3: Extract frames at regular intervals (simpler, more reliable)
+        frames_dir = os.path.join(task_dir, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
         
-        all_frame_paths, orig_width, orig_height = extract_all_frames(
-            stabilized_path, all_frames_dir
+        # Extract equidistant frames directly
+        frame_paths, orig_width, orig_height = extract_frames(
+            stabilized_path, frames_dir, num_frames, output_width=800
         )
-        update_task_status(task_id, "PROCESSING", 35, "detecting")
+        update_task_status(task_id, "PROCESSING", 50, "detecting")
         
-        # Step 4: Detect vehicles in frames (sample for speed)
+        # Step 4: Detect vehicles in frames for centering
         detector = VehicleDetector()
-        sample_rate = max(1, len(all_frame_paths) // 50)  # Sample ~50 frames
-        sampled_paths = all_frame_paths[::sample_rate]
-        detections = detect_vehicles_in_frames(sampled_paths, detector)
-        
-        # Expand detections to all frames
-        full_detections = []
-        for i, path in enumerate(all_frame_paths):
-            sample_idx = i // sample_rate
-            if sample_idx < len(detections):
-                full_detections.append(detections[sample_idx])
-            else:
-                full_detections.append(detections[-1] if detections else None)
-        
-        update_task_status(task_id, "PROCESSING", 50, "extracting")
-        
-        # Step 5: Select frames by angle
-        selected_paths = select_frames_by_angle(all_frame_paths, num_frames)
-        
-        # Get detections for selected frames
-        selected_detections = []
-        for path in selected_paths:
-            idx = all_frame_paths.index(path) if path in all_frame_paths else 0
-            selected_detections.append(full_detections[idx] if idx < len(full_detections) else None)
+        detections = detect_vehicles_in_frames(frame_paths, detector)
         
         update_task_status(task_id, "PROCESSING", 60, "normalizing")
+        
+        # Use extracted frames directly
+        selected_paths = frame_paths
+        selected_detections = detections
         
         # Step 6: Normalize frames
         normalized_dir = os.path.join(task_dir, "normalized")
