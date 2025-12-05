@@ -6,7 +6,11 @@ from datetime import datetime
 import redis
 
 from .celery_app import celery_app
-from .pipeline.extractor import extract_frames
+from .pipeline.extractor import extract_frames, extract_all_frames
+from .pipeline.stabilizer import stabilize_video, check_vidstab_available
+from .pipeline.detector import VehicleDetector, detect_vehicles_in_frames
+from .pipeline.normalizer import normalize_frames
+from .pipeline.angle_estimator import select_frames_by_angle
 from .pipeline.sprite_builder import build_sprite_sheet
 from .pipeline.viewer_generator import generate_viewer
 
@@ -49,12 +53,16 @@ def process_video(self, task_id: str, num_frames: int = 36):
     """
     Main task to process a walk-around video into a 360° spin viewer.
     
-    Pipeline:
+    Full Pipeline:
     1. Download video from MinIO
-    2. Extract frames
-    3. Build sprite sheet
-    4. Generate viewer HTML
-    5. Upload results to MinIO
+    2. Stabilize video (vidstab)
+    3. Extract all frames
+    4. Detect vehicles (YOLOv8)
+    5. Select frames by angle
+    6. Normalize frames (crop, center, resize)
+    7. Build sprite sheet
+    8. Generate viewer HTML
+    9. Upload results to MinIO
     """
     start_time = time.time()
     temp_dir = os.getenv("TEMP_DIR", "/app/temp")
@@ -65,7 +73,7 @@ def process_video(self, task_id: str, num_frames: int = 36):
         os.makedirs(task_dir, exist_ok=True)
         
         # Update status: PROCESSING
-        update_task_status(task_id, "PROCESSING", 5, "extracting")
+        update_task_status(task_id, "PROCESSING", 5, "stabilizing")
         
         # Step 1: Download video from MinIO
         minio_client = get_minio_client()
@@ -80,30 +88,78 @@ def process_video(self, task_id: str, num_frames: int = 36):
         video_path = os.path.join(task_dir, f"original.{video_ext}")
         
         minio_client.fget_object(bucket, video_object, video_path)
-        update_task_status(task_id, "PROCESSING", 15, "extracting")
+        update_task_status(task_id, "PROCESSING", 10, "stabilizing")
         
-        # Step 2: Extract frames
-        frames_dir = os.path.join(task_dir, "frames")
-        os.makedirs(frames_dir, exist_ok=True)
+        # Step 2: Stabilize video
+        stabilized_path = os.path.join(task_dir, f"stabilized.{video_ext}")
+        if check_vidstab_available():
+            stabilize_video(video_path, stabilized_path)
+        else:
+            # Skip stabilization if vidstab not available
+            stabilized_path = video_path
+        update_task_status(task_id, "PROCESSING", 25, "extracting")
         
-        frame_paths, frame_width, frame_height = extract_frames(
-            video_path, frames_dir, num_frames
+        # Step 3: Extract ALL frames for analysis
+        all_frames_dir = os.path.join(task_dir, "all_frames")
+        os.makedirs(all_frames_dir, exist_ok=True)
+        
+        all_frame_paths, orig_width, orig_height = extract_all_frames(
+            stabilized_path, all_frames_dir
         )
-        update_task_status(task_id, "PROCESSING", 50, "building")
+        update_task_status(task_id, "PROCESSING", 35, "detecting")
         
-        # Step 3: Build sprite sheet
-        sprite_path = os.path.join(task_dir, "sprite.jpg")
-        build_sprite_sheet(frame_paths, sprite_path, num_frames)
+        # Step 4: Detect vehicles in frames (sample for speed)
+        detector = VehicleDetector()
+        sample_rate = max(1, len(all_frame_paths) // 50)  # Sample ~50 frames
+        sampled_paths = all_frame_paths[::sample_rate]
+        detections = detect_vehicles_in_frames(sampled_paths, detector)
+        
+        # Expand detections to all frames
+        full_detections = []
+        for i, path in enumerate(all_frame_paths):
+            sample_idx = i // sample_rate
+            if sample_idx < len(detections):
+                full_detections.append(detections[sample_idx])
+            else:
+                full_detections.append(detections[-1] if detections else None)
+        
+        update_task_status(task_id, "PROCESSING", 50, "extracting")
+        
+        # Step 5: Select frames by angle
+        selected_paths = select_frames_by_angle(all_frame_paths, num_frames)
+        
+        # Get detections for selected frames
+        selected_detections = []
+        for path in selected_paths:
+            idx = all_frame_paths.index(path) if path in all_frame_paths else 0
+            selected_detections.append(full_detections[idx] if idx < len(full_detections) else None)
+        
+        update_task_status(task_id, "PROCESSING", 60, "normalizing")
+        
+        # Step 6: Normalize frames
+        normalized_dir = os.path.join(task_dir, "normalized")
+        frame_width, frame_height = 800, 600
+        normalized_paths = normalize_frames(
+            selected_paths,
+            selected_detections,
+            normalized_dir,
+            output_size=(frame_width, frame_height),
+        )
         update_task_status(task_id, "PROCESSING", 75, "building")
         
-        # Step 4: Generate viewer HTML
+        # Step 7: Build sprite sheet
+        sprite_path = os.path.join(task_dir, "sprite.jpg")
+        build_sprite_sheet(normalized_paths, sprite_path, num_frames)
+        update_task_status(task_id, "PROCESSING", 85, "building")
+        
+        # Step 8: Generate viewer HTML
         viewer_path = os.path.join(task_dir, "viewer.html")
         generate_viewer(viewer_path, num_frames, frame_width, frame_height)
-        update_task_status(task_id, "PROCESSING", 85, "uploading")
+        update_task_status(task_id, "PROCESSING", 90, "uploading")
         
-        # Step 5: Upload results to MinIO
-        # Upload frames
-        for i, frame_path in enumerate(frame_paths):
+        # Step 9: Upload results to MinIO
+        # Upload normalized frames
+        for i, frame_path in enumerate(normalized_paths):
             frame_name = os.path.basename(frame_path)
             minio_client.fput_object(
                 bucket,

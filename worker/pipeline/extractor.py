@@ -118,3 +118,62 @@ def extract_frames(
         raise Exception("No frames were extracted from the video")
     
     return frame_paths, output_width, output_height
+
+
+def extract_all_frames(
+    video_path: str,
+    output_dir: str,
+    fps: int = None,
+) -> Tuple[List[str], int, int]:
+    """
+    Extract all frames from a video (or at specified FPS).
+    
+    Args:
+        video_path: Path to input video
+        output_dir: Directory to save frames
+        fps: Frames per second to extract (None = all frames)
+    
+    Returns:
+        Tuple of (list of frame paths, frame width, frame height)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    orig_width, orig_height = get_video_dimensions(video_path)
+    
+    # Build ffmpeg command
+    if fps:
+        vf_filter = f"fps={fps}"
+    else:
+        vf_filter = None
+    
+    output_pattern = os.path.join(output_dir, "frame_%05d.jpg")
+    
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", video_path,
+    ]
+    
+    if vf_filter:
+        cmd.extend(["-vf", vf_filter])
+    
+    cmd.extend([
+        "-q:v", "2",
+        output_pattern,
+    ])
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Warning: FFmpeg extraction issue: {result.stderr}")
+    
+    # Collect extracted frames
+    frame_paths = sorted([
+        os.path.join(output_dir, f)
+        for f in os.listdir(output_dir)
+        if f.endswith(".jpg")
+    ])
+    
+    if not frame_paths:
+        raise Exception("No frames were extracted from the video")
+    
+    return frame_paths, orig_width, orig_height
